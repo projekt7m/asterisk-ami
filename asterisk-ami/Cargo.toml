@@ -1,9 +1,9 @@
 [package]
-name = "asterisk-ami-example"
+name = "asterisk-ami"
 version = "0.1.0"
 edition = "2018"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-dotenv = "0.15.0"
-asterisk-ami = { path = "asterisk-ami" }
+regex = "1.5.4"
+lazy_static = "1.4.0"
