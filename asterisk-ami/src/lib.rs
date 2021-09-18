@@ -2,15 +2,25 @@ use lazy_static::lazy_static;
 use regex::Regex;
 use std::error::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::broadcast::{Receiver, Sender};
 
 lazy_static! {
     static ref TAG_PATTERN: Regex = Regex::new(r"^([^:]*): *(.*)$").unwrap();
 }
 
-pub async fn ami_connect(
-    server: &str,
+/// Establishes a connection to an asterisk server
+///
+/// # Arguments
+///
+/// * `server` - address of the asterisk server's AMI interface, e.g `127.0.0.1:5038`
+/// * `cmd_rx` - receiver side of a channel that is used to send actions to Asterisk
+/// * `resp_tx` - sender side of a channel used to send responses back to the caller
+/// * `event_tx` - sender side of a channel used to send events to the caller
+///
+/// Returns `Ok(())` on success and `Err(_)` on failure.
+pub async fn ami_connect<A: ToSocketAddrs>(
+    server: A,
     mut cmd_rx: Receiver<Vec<(String, String)>>,
     resp_tx: Sender<Vec<(String, String)>>,
     event_tx: Sender<Vec<(String, String)>>,

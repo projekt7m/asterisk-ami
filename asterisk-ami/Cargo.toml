@@ -1,9 +1,17 @@
 [package]
 name = "asterisk-ami"
 description = "Minimalistic library to communicate with an Asterisk server using the AMI over TCP protocol"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
 license = "MIT OR Apache-2.0"
+authors = [ "Matthias Wimmer <m@tthias.eu>" ]
+documentation = "https://docs.rs/asterisk-ami"
+readme = "README.md"
+homepage = "https://github.com/projekt7m/asterisk-ami/tree/main/asterisk-ami"
+repository = "https://github.com/projekt7m/asterisk-ami"
+keywords = [ "asterisk", "ami", "async", "tokio", "voip" ]
+categories = [ "api-bindings", "network-programming" ]
+
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }

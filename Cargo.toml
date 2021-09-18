@@ -1,9 +1,11 @@
 [package]
 name = "asterisk-ami-example"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
+publish = false
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 dotenv = "0.15.0"
 asterisk-ami = { path = "asterisk-ami" }
+clap = "2.33.3"
