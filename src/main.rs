@@ -1,10 +1,10 @@
-use asterisk_ami::ami_connect;
+use asterisk_ami::{ami_connect, Tag};
 use clap::{clap_app, crate_version};
 use std::error::Error;
+use std::net::SocketAddr;
 use tokio::io;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::broadcast;
-use std::net::SocketAddr;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -22,11 +22,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
     .get_matches();
 
     let all_events = args.is_present("EVENTS");
-    let mut in_response = false;
 
-    let username = args.value_of("USER").map(String::from).or(dotenv::var("USERNAME").ok()).expect("No username given");
-    let secret = args.value_of("PASS").map(String::from).or(dotenv::var("SECRET").ok()).expect("No password given");
-    let server = args.value_of("SERVER").map(String::from).or(dotenv::var("SERVER").ok()).unwrap_or(String::from("127.0.0.1:5038"));
+    let username = args
+        .value_of("USER")
+        .map(String::from)
+        .or(dotenv::var("USERNAME").ok())
+        .expect("No username given");
+    let secret = args
+        .value_of("PASS")
+        .map(String::from)
+        .or(dotenv::var("SECRET").ok())
+        .expect("No password given");
+    let server = args
+        .value_of("SERVER")
+        .map(String::from)
+        .or(dotenv::var("SERVER").ok())
+        .unwrap_or(String::from("127.0.0.1:5038"));
     let server_address: SocketAddr = server.parse()?;
 
     let mut stdin_reader = BufReader::new(io::stdin());
@@ -42,9 +53,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     });
 
     let login = vec![
-        (String::from("Action"), String::from("Login")),
-        (String::from("Username"), username),
-        (String::from("Secret"), secret),
+        Tag {
+            key: String::from("Action"),
+            value: String::from("Login"),
+        },
+        Tag {
+            key: String::from("Username"),
+            value: username,
+        },
+        Tag {
+            key: String::from("Secret"),
+            value: secret,
+        },
     ];
     cmd_tx.send(login)?;
 
@@ -60,27 +80,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if cmd == "" {
                     break;
                 } else {
-                    let pkt = vec![(String::from("Action"), String::from(cmd))];
+                    let pkt = vec![Tag { key: String::from("Action"), value: String::from(cmd)}];
                     cmd_tx.send(pkt)?;
                 }
                 line_buffer.clear();
             }
 
-            resp = resp_rx.recv() => {
-                let response = resp?;
-                println!("| {:?}", response);
-                if response.len() >= 2 && response[1].0 == "EventList" && response[1].1 == "start" {
-                    in_response = true;
-                }
+            response = resp_rx.recv() => {
+                println!("{:?}", response?);
             }
 
-            evt = event_rx.recv() => {
-                let event = evt?;
-                if all_events || in_response {
-                    println!("| {:?}", event);
-                }
-                if event.len() >= 2 && event[1].0 == "EventList" && event[1].1 == "Complete" {
-                    in_response = false;
+            event = event_rx.recv() => {
+                if all_events {
+                    println!("{:?}", event?);
                 }
             }
         }
