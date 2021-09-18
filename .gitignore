@@ -6,3 +6,5 @@ target/
 .*.swp
 
 .env
+
+asterisk-ami/Cargo.lock
