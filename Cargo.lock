@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "asterisk-ami"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "lazy_static",
  "regex",
@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "asterisk-ami-example"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "asterisk-ami",
  "clap",

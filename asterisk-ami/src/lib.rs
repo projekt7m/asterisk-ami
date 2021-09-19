@@ -59,7 +59,7 @@ pub async fn ami_connect<A: ToSocketAddrs>(
                         event_tx.send(in_packet.clone())?;
                     } else {
                         response.push(in_packet.clone());
-                        let event_list = find_tag(&in_packet, "EventList").map(|tag| &tag.value);
+                        let event_list = find_tag(&in_packet, "EventList");
                         if event_list.filter(|el| el.eq_ignore_ascii_case("start")).is_some() {
                             in_response_sequence = true;
                         } else if event_list.filter(|el| el.eq_ignore_ascii_case("Complete")).is_some() {
@@ -95,9 +95,10 @@ pub async fn ami_connect<A: ToSocketAddrs>(
 ///
 /// * `pkt` - The `Packet` to search in
 /// * `key` - The key to search the `Tag` for
-pub fn find_tag<'a>(pkt: &'a Packet, key: &str) -> Option<&'a Tag> {
+pub fn find_tag<'a>(pkt: &'a Packet, key: &str) -> Option<&'a String> {
     pkt.iter()
         .find(|&tag| tag.key.eq_ignore_ascii_case(key))
+        .map(|t| &t.value)
 }
 
 fn line_to_tag(line: &str) -> Option<Tag> {

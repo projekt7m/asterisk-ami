@@ -8,3 +8,5 @@ target/
 .env
 
 asterisk-ami/Cargo.lock
+
+*.orig
