@@ -1,6 +1,6 @@
 [package]
 name = "asterisk-ami-example"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2018"
 publish = false
 

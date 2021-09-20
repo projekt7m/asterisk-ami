@@ -1,10 +1,9 @@
-use asterisk_ami::{ami_connect, Tag};
+use asterisk_ami::{AmiConnection, Tag};
 use clap::{clap_app, crate_version};
 use std::error::Error;
 use std::net::SocketAddr;
 use tokio::io;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::broadcast;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -42,31 +41,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut stdin_reader = BufReader::new(io::stdin());
 
-    let (cmd_tx, cmd_rx) = broadcast::channel(16);
-    let (resp_tx, mut resp_rx) = broadcast::channel(16);
-    let (event_tx, mut event_rx) = broadcast::channel(16);
+    let ami_connection = AmiConnection::connect(server_address).await?;
 
-    tokio::spawn(async move {
-        ami_connect(server_address, cmd_rx, resp_tx, event_tx)
-            .await
-            .expect("Connection did return with error");
-    });
+    if all_events {
+        let mut events = ami_connection.events();
+        tokio::spawn(async move {
+            loop {
+                events.changed().await.unwrap();
+                println!("Event: {:?}", *events.borrow());
+            }
+        });
+    }
 
     let login = vec![
-        Tag {
-            key: String::from("Action"),
-            value: String::from("Login"),
-        },
-        Tag {
-            key: String::from("Username"),
-            value: username,
-        },
-        Tag {
-            key: String::from("Secret"),
-            value: secret,
-        },
+        Tag::from("Action", "Login"),
+        Tag::from("Username", &username),
+        Tag::from("Secret", &secret),
     ];
-    cmd_tx.send(login)?;
+    let login_response = ami_connection.send(login).await.unwrap();
+    println!("Login Response: {:?}", login_response);
 
     let mut line_buffer = String::new();
     loop {
@@ -80,20 +73,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if cmd == "" {
                     break;
                 } else {
-                    let pkt = vec![Tag { key: String::from("Action"), value: String::from(cmd)}];
-                    cmd_tx.send(pkt)?;
+                    let pkt = vec![Tag::from("Action", cmd)];
+                    let response = ami_connection.send(pkt).await.unwrap();
+                    println!("Response: {:?}", response);
                 }
                 line_buffer.clear();
-            }
-
-            response = resp_rx.recv() => {
-                println!("{:?}", response?);
-            }
-
-            event = event_rx.recv() => {
-                if all_events {
-                    println!("{:?}", event?);
-                }
             }
         }
     }
