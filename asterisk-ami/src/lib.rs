@@ -1,7 +1,7 @@
 use response::{Response, ResponseBuilder};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, ToSocketAddrs};
-use tokio::sync::{oneshot, watch, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
 mod response;
 
@@ -20,7 +20,10 @@ impl Tag {
     }
 
     pub fn from(key: &str, value: &str) -> Self {
-        Self { key: key.to_string(), value: value.to_string() }
+        Self {
+            key: key.to_string(),
+            value: value.to_string(),
+        }
     }
 }
 
@@ -40,7 +43,7 @@ struct Command {
 
 pub struct AmiConnection {
     cmd_tx: mpsc::Sender<Command>,
-    events_rx: watch::Receiver<Option<Packet>>,
+    events_tx: broadcast::Sender<Option<Packet>>,
 }
 
 impl AmiConnection {
@@ -49,16 +52,16 @@ impl AmiConnection {
     /// # Arguments
     ///
     /// * `server` - address of the asterisk server's AMI interface, e.g `127.0.0.1:5038`
-    pub async fn connect<A: ToSocketAddrs>(
-        server: A,
-    ) -> Result<AmiConnection, std::io::Error> {
+    pub async fn connect<A: ToSocketAddrs>(server: A) -> Result<AmiConnection, std::io::Error> {
         let socket = TcpStream::connect(server).await?;
         let mut reader = BufReader::new(socket);
         let mut greeting = String::new();
         reader.read_line(&mut greeting).await?;
 
         let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(32);
-        let (events_tx, events_rx) = watch::channel::<Option<Packet>>(None);
+        let (events_tx, _) = broadcast::channel::<Option<Packet>>(32);
+
+        let events_tx2 = events_tx.clone();
 
         tokio::spawn(async move {
             let mut current_command: Option<Command> = None;
@@ -98,7 +101,9 @@ impl AmiConnection {
                 if let Some(resp) = maybe_response {
                     match resp {
                         Response::Event(pkt) => {
-                            events_tx.send(Some(pkt)).unwrap();
+                            if events_tx2.receiver_count() > 0 {
+                                events_tx2.send(Some(pkt)).unwrap();
+                            }
                         }
                         Response::CommandResponse(cr) => {
                             if let Some(cmd) = current_command {
@@ -113,7 +118,7 @@ impl AmiConnection {
             }
         });
 
-        Ok(AmiConnection { cmd_tx, events_rx })
+        Ok(AmiConnection { cmd_tx, events_tx })
     }
 
     pub async fn send(&self, packet: Packet) -> Option<Vec<Packet>> {
@@ -126,8 +131,8 @@ impl AmiConnection {
         result
     }
 
-    pub fn events(&self) -> watch::Receiver<Option<Packet>> {
-        self.events_rx.clone()
+    pub fn events(&self) -> broadcast::Receiver<Option<Packet>> {
+        self.events_tx.subscribe()
     }
 }
 

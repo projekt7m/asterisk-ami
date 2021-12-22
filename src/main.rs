@@ -47,8 +47,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         let mut events = ami_connection.events();
         tokio::spawn(async move {
             loop {
-                events.changed().await.unwrap();
-                println!("Event: {:?}", *events.borrow());
+                println!("Event: {:?}", events.recv().await);
             }
         });
     }
