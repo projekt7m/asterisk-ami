@@ -25,6 +25,7 @@ name = "asterisk-ami"
 version = "0.1.5"
 dependencies = [
  "lazy_static",
+ "log",
  "regex",
  "tokio",
 ]

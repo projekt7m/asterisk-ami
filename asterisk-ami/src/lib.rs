@@ -1,6 +1,9 @@
+use log::{trace, warn};
 use response::{Response, ResponseBuilder};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, ToSocketAddrs};
+use tokio::sync::broadcast::Sender;
+use tokio::sync::mpsc::Receiver;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 mod response;
@@ -52,83 +55,167 @@ impl AmiConnection {
     /// # Arguments
     ///
     /// * `server` - address of the asterisk server's AMI interface, e.g `127.0.0.1:5038`
-    pub async fn connect<A: ToSocketAddrs>(server: A) -> Result<AmiConnection, std::io::Error> {
-        let socket = TcpStream::connect(server).await?;
-        let mut reader = BufReader::new(socket);
-        let mut greeting = String::new();
-        reader.read_line(&mut greeting).await?;
+    pub async fn connect<A: ToSocketAddrs + std::fmt::Debug>(
+        server: A,
+    ) -> Result<AmiConnection, std::io::Error> {
+        let reader = Self::connect_to_server(server).await?;
 
-        let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(32);
+        let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(32);
         let (events_tx, _) = broadcast::channel::<Option<Packet>>(32);
 
         let events_tx2 = events_tx.clone();
 
         tokio::spawn(async move {
-            let mut current_command: Option<Command> = None;
-            let mut response_builder = ResponseBuilder::new();
-            let mut line = String::new();
-            let mut maybe_response: Option<Response> = None;
-            loop {
-                if current_command.is_none() {
-                    tokio::select! {
-                        bytes_read = reader.read_line(&mut line) => {
-                            if bytes_read.unwrap() == 0 {
-                                break;
-                            }
-                            maybe_response = response_builder.add_line(line.trim());
-                        }
-
-                        cmd = cmd_rx.recv() => {
-                            if let Some(c) = cmd {
-                                let chunk = format!("{}\r\n\r\n", packet_to_string(&c.packet));
-                                current_command = Some(c);
-                                reader.write_all(chunk.as_bytes()).await.unwrap();
-                            }
-                        }
-                    }
-                } else {
-                    tokio::select! {
-                        bytes_read = reader.read_line(&mut line) => {
-                            if bytes_read.unwrap() == 0 {
-                                break;
-                            }
-
-                            maybe_response = response_builder.add_line(line.trim());
-                        }
-                    }
-                }
-
-                if let Some(resp) = maybe_response {
-                    match resp {
-                        Response::Event(pkt) => {
-                            if events_tx2.receiver_count() > 0 {
-                                events_tx2.send(Some(pkt)).unwrap();
-                            }
-                        }
-                        Response::CommandResponse(cr) => {
-                            if let Some(cmd) = current_command {
-                                cmd.resp.send(cr).unwrap();
-                            }
-                            current_command = None;
-                        }
-                    }
-                }
-                maybe_response = None;
-                line.clear();
-            }
+            Self::handle_server_connection(reader, cmd_rx, events_tx2).await;
         });
 
         Ok(AmiConnection { cmd_tx, events_tx })
     }
 
-    pub async fn send(&self, packet: Packet) -> Option<Vec<Packet>> {
+    async fn handle_server_connection(
+        mut server_connection: BufReader<TcpStream>,
+        mut command_channel_rx: Receiver<Command>,
+        event_channel_tx: Sender<Option<Packet>>,
+    ) {
+        let mut current_command: Option<Command> = None;
+        let mut response_builder = ResponseBuilder::new();
+        let mut line = String::new();
+        let mut maybe_response: Option<Response> = None;
+        loop {
+            if current_command.is_none() {
+                tokio::select! {
+                    bytes_read = server_connection.read_line(&mut line) => {
+                        match bytes_read {
+                            Err(e) => {
+                                warn!("Error reading from server connection: {:?}", e);
+                                break;
+                            }
+                            Ok(0) => {
+                                trace!("Server connection closed");
+                                break;
+                            }
+                            Ok(_) => {
+                                maybe_response = response_builder.add_line(line.trim());
+                            }
+                        }
+                    }
+
+                    cmd = command_channel_rx.recv() => {
+                        if let Some(c) = cmd {
+                            let chunk = format!("{}\r\n\r\n", packet_to_string(&c.packet));
+                            current_command = Some(c);
+                            if let Err(e) = server_connection.write_all(chunk.as_bytes()).await {
+                                warn!("Error writing to server connection: {:?}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                tokio::select! {
+                    bytes_read = server_connection.read_line(&mut line) => {
+                        match bytes_read {
+                            Err(e) => {
+                                warn!("Error reading from server connection: {:?}", e);
+                                break;
+                            }
+                            Ok(0) => {
+                                trace!("Server connection closed");
+                                break;
+                            }
+                            Ok(_) => {
+                                maybe_response = response_builder.add_line(line.trim());
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Some(resp) = maybe_response {
+                match resp {
+                    Response::Event(pkt) => {
+                        if !Self::publish_event(&event_channel_tx, Some(pkt)) {
+                            break;
+                        }
+                    }
+                    Response::CommandResponse(cr) => {
+                        if let Some(cmd) = current_command {
+                            current_command = None;
+                            if let Err(e) = cmd.resp.send(cr) {
+                                warn!(
+                                    "Cannot send command response back: {:?}",
+                                    e
+                                );
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            maybe_response = None;
+            line.clear();
+        }
+
+        Self::publish_event(&event_channel_tx, None);
+        command_channel_rx.close();
+        if let Some(cmd) = current_command {
+            if let Err(e) = cmd.resp.send(vec![]) {
+                warn!("Cannot terminate current command on close: {:?}", e);
+            }
+        }
+    }
+
+    fn publish_event(
+        event_channel_tx: &Sender<Option<Packet>>,
+        pkt: Option<Packet>,
+    ) -> bool {
+        if event_channel_tx.receiver_count() > 0 {
+            if let Err(e) = event_channel_tx.send(pkt) {
+                warn!("Could not send event to subscribers: {:?}", e);
+                return false;
+            }
+        }
+        true
+    }
+
+    async fn connect_to_server<A: ToSocketAddrs + std::fmt::Debug>(
+        server: A,
+    ) -> Result<BufReader<TcpStream>, std::io::Error> {
+        trace!("Connecting to {:?}", server);
+        let mut reader = BufReader::new(TcpStream::connect(server).await?);
+        Self::read_greeting(&mut reader).await?;
+        Ok(reader)
+    }
+
+    async fn read_greeting(
+        reader: &mut BufReader<TcpStream>,
+    ) -> Result<(), std::io::Error> {
+        let mut greeting = String::new();
+        reader.read_line(&mut greeting).await?;
+
+        Ok(())
+    }
+
+    /// Send a command to the Asterisk server using AMI
+    ///
+    /// # Arguments
+    ///
+    /// * `pkt` - The `Packet` to send to the server
+    ///
+    /// # Return value
+    ///
+    /// Returns `Some(packets)` on success. `None` signales an error and that the connection
+    /// should be reestablished.
+    pub async fn send(&self, pkt: Packet) -> Option<Vec<Packet>> {
         let (tx, rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command { packet, resp: tx })
+            .send(Command {
+                packet: pkt,
+                resp: tx,
+            })
             .await
-            .unwrap();
-        let result = rx.await.ok();
-        result
+            .ok()?;
+        rx.await.ok()
     }
 
     pub fn events(&self) -> broadcast::Receiver<Option<Packet>> {
