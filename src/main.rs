@@ -1,12 +1,20 @@
 use asterisk_ami::{AmiConnection, Tag};
 use clap::{clap_app, crate_version};
+use simple_logger::SimpleLogger;
 use std::error::Error;
 use std::net::SocketAddr;
+use log::{error, info, trace, warn};
 use tokio::io;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    SimpleLogger::new()
+        .with_utc_timestamps()
+        .with_colors(true)
+        .init()
+        .unwrap();
+
     let args = clap_app!(
         myapp =>
             (name: "asterisk-ami-example")
@@ -41,42 +49,65 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let mut stdin_reader = BufReader::new(io::stdin());
 
-    let ami_connection = AmiConnection::connect(server_address).await?;
+    'outer: loop {
+        let ami_connection = AmiConnection::connect(server_address).await?;
 
-    if all_events {
-        let mut events = ami_connection.events();
-        tokio::spawn(async move {
-            loop {
-                println!("Event: {:?}", events.recv().await);
+        if all_events {
+            let mut events = ami_connection.events();
+            tokio::spawn(async move {
+                loop {
+                    match events.recv().await {
+                        Err(e) => warn!("Error on reading event: {:?}", e),
+                        Ok(Some(evt)) => info!("Event: {:?}", evt),
+                        Ok(None) => {
+                            trace!("Connection closed.");
+                            continue;
+                        }
+                    }
+                }
+            });
+        }
+
+        let login = vec![
+            Tag::from("Action", "Login"),
+            Tag::from("Username", &username),
+            Tag::from("Secret", &secret),
+        ];
+        match ami_connection.send(login).await {
+            Some(resp) => info!("Login Response: {:?}", resp),
+            None => {
+                error!(
+                    "Error on logging in ... maybe cannot connect to server?"
+                );
+                break;
             }
-        });
-    }
+        }
 
-    let login = vec![
-        Tag::from("Action", "Login"),
-        Tag::from("Username", &username),
-        Tag::from("Secret", &secret),
-    ];
-    let login_response = ami_connection.send(login).await.unwrap();
-    println!("Login Response: {:?}", login_response);
+        let mut line_buffer = String::new();
+        loop {
+            tokio::select! {
+                bytes_read = stdin_reader.read_line(&mut line_buffer) => {
+                    if bytes_read? == 0 {
+                        trace!("Stdin closed");
+                        break 'outer;
+                    }
 
-    let mut line_buffer = String::new();
-    loop {
-        tokio::select! {
-            bytes_read = stdin_reader.read_line(&mut line_buffer) => {
-                if bytes_read? == 0 {
-                    break;
+                    let cmd = line_buffer.trim();
+                    if cmd == "" {
+                        trace!("Good Bye");
+                        break 'outer;
+                    } else {
+                        let pkt = vec![Tag::from("Action", cmd)];
+                        match ami_connection.send(pkt).await {
+                            Some(resp) => info!("Response: {:?}", resp),
+                            None => {
+                                info!("No response. Connection probably closed.");
+                                break;
+                            },
+                        }
+                    }
+                    line_buffer.clear();
                 }
-
-                let cmd = line_buffer.trim();
-                if cmd == "" {
-                    break;
-                } else {
-                    let pkt = vec![Tag::from("Action", cmd)];
-                    let response = ami_connection.send(pkt).await.unwrap();
-                    println!("Response: {:?}", response);
-                }
-                line_buffer.clear();
             }
         }
     }

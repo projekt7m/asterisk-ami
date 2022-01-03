@@ -5,7 +5,9 @@ edition = "2018"
 publish = false
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
-dotenv = "0.15.0"
 asterisk-ami = { path = "asterisk-ami" }
 clap = "2.33.3"
+dotenv = "0.15.0"
+log = "0.4.14"
+simple_logger = "1.16.0"
+tokio = { version = "1", features = ["full"] }
