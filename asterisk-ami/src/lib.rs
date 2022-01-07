@@ -1,4 +1,4 @@
-use log::{trace, warn};
+use log::{info, trace, warn};
 use response::{Response, ResponseBuilder};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpStream, ToSocketAddrs};
@@ -156,9 +156,13 @@ impl AmiConnection {
             line.clear();
         }
 
+        trace!("Packet passing loop ended! Publishing 'None' event");
         Self::publish_event(&event_channel_tx, None);
+        
+        trace!("Closing command channel");
         command_channel_rx.close();
         if let Some(cmd) = current_command {
+            info!("There was a running command on closed connection: {:?}", cmd);
             if let Err(e) = cmd.resp.send(vec![]) {
                 warn!("Cannot terminate current command on close: {:?}", e);
             }
