@@ -1,10 +1,4 @@
 use super::{find_tag, Packet, Tag};
-use lazy_static::lazy_static;
-use regex::Regex;
-
-lazy_static! {
-    static ref TAG_PATTERN: Regex = Regex::new(r"^([^:]*): *(.*)$").unwrap();
-}
 
 #[derive(Debug)]
 pub enum Response {
@@ -73,6 +67,9 @@ impl ResponseBuilder {
 }
 
 fn line_to_tag(line: &str) -> Option<Tag> {
-    let caps = TAG_PATTERN.captures(line)?;
-    Some(Tag::from(&caps[1], &caps[2]))
+    line.find(':').map(|pos| {
+        let key = &line[0..pos];
+        let value = &line[pos + 1..].trim();
+        Tag::from(key, value)
+    })
 }
