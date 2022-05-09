@@ -6,7 +6,7 @@ publish = false
 
 [dependencies]
 asterisk-ami = { path = "asterisk-ami" }
-clap = "2.33.3"
+clap = "2.34.0"
 dotenv = "0.15.0"
 log = "0.4.14"
 simple_logger = "1.16.0"
