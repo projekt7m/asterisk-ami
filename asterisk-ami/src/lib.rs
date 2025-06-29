@@ -108,6 +108,9 @@ impl AmiConnection {
                                 warn!("Error writing to server connection: {:?}", e);
                                 break;
                             }
+                        } else {
+                            trace!("Channel has been closed");
+                            break;
                         }
                     }
                 }
@@ -158,7 +161,7 @@ impl AmiConnection {
 
         trace!("Packet passing loop ended! Publishing 'None' event");
         Self::publish_event(&event_channel_tx, None);
-        
+
         trace!("Closing command channel");
         command_channel_rx.close();
         if let Some(cmd) = current_command {
